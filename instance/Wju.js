@@ -1,17 +1,48 @@
+import {HtmlParser} from "../parser/HtmlParser/HtmlParser";
+import {createElement as _createElement} from "./VNodeGenerator";
+
 export class Wju {
     $currentContextStack = [];
     $reactivityDependency = new Map();
     $watchers = new Map();
+    $computedCache = new Map();
+    $proxy = null;
 
     constructor(config) {
+        if (config.template) {
+            const parser = new HtmlParser(config.template);
+            console.log({parser})
+            const parsed = parser.parse();
+            console.log({parsed})
+            const renderFunction = parsed.generateJsCode();
+            console.log({renderFunction})
+            this.$render= function () {
+                const createElement = _createElement;
+                return eval(renderFunction);
+            }
+        }else{
+            this.$render = config.render;
+        }
         if (config.data) {
             Object.assign(this, config.data());
         }
         if (config.computed) {
             for (const key in config.computed) {
                 Object.defineProperty(this, key, {
-                    get: config.computed[key]
+                    get: () => {
+                        if (this.$computedCache.has(key)) {
+                            return this.$computedCache.get(key);
+                        } else {
+                            const value = this.$executeWatch(key, config.computed[key].bind(this.$proxy));
+                            this.$computedCache.set(key, value);
+                            return value;
+                        }
+                    }
                 })
+                this.$setWatch(key, () => {
+                    console.log('watchComputed')
+                    this.$computedCache.delete(key);
+                });
             }
         }
         if (config.methods) {
@@ -19,14 +50,18 @@ export class Wju {
                 this[key] = config.methods[key];
             }
         }
-        this.$render = config.render;
+        if (config.watch) {
+            for (const key in config.watch) {
+                this.$setWatch(key, () => config.watch[key].apply(this.$proxy))
+            }
+        }
     }
 
     $mount(parentElement) {
         this.$update();
         parentElement.appendChild(this.$el);
         this.$setWatch('$render', () => {
-           this.$update()
+            this.$update()
         })
     }
 
@@ -38,9 +73,7 @@ export class Wju {
     }
 
     $update() {
-        console.log('update')
         const vnode = this.$executeWatch('$render', () => this.$render());
-        console.log(vnode);
         const oldElement = this.$el;
         this.$el = vnode.render(this, oldElement);
         if (oldElement && oldElement !== this.$el) {
@@ -54,7 +87,6 @@ export class Wju {
         try {
             return fun()
         } finally {
-            console.log('aaaaaaaa')
             const popped = this.$currentContextStack.pop();
             if (popped !== executionContext) {
                 throw new Error('Stack corrupted')
@@ -65,7 +97,6 @@ export class Wju {
 }
 
 class WjuProxyHandler {
-    cache = new Map();
     changeListeners = new Map();
 
     constructor(obj) {
@@ -73,7 +104,6 @@ class WjuProxyHandler {
     }
 
     get(target, prop, receiver) {
-        console.log({target, prop, receiver})
         const context = target.$currentContextStack[target.$currentContextStack.length - 1];
         if (context) {
             context.touchedProperties.add(prop);
@@ -85,10 +115,11 @@ class WjuProxyHandler {
     }
 
     set(target, prop, value, receiver) {
-
-        console.log({target, prop, value, receiver})
         target[prop] = value;
 
+        for (const listener of target.$watchers.get(prop) ?? []) {
+            listener();
+        }
         for (const [listeningKey, set] of target.$reactivityDependency) {
             if (set.has(prop)) {
                 for (const listener of target.$watchers.get(listeningKey) ?? []) {
@@ -104,5 +135,7 @@ class WjuProxyHandler {
 export function createWjuInstance(config) {
     const obj = new Wju(config);
     const proxyHandler = new WjuProxyHandler(obj);
-    return new Proxy(obj, proxyHandler);
+    const proxy = new Proxy(obj, proxyHandler);
+    obj.$proxy = proxy;
+    return proxy;
 }

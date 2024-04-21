@@ -1,19 +1,19 @@
 export class VElement {
-    constructor(tagName, args, children) {
+    constructor(tagName, attributes, children) {
         this.tagName = tagName;
-        this.arguments = args;
+        this.attributes = attributes;
         this.children = children;
     }
 
     render(component, oldElement = null) {
         let ret = document.createElement(this.tagName);
-        for (const key in this.arguments) {
+        for (const key in this.attributes) {
             if (key == 'on') {
-                for (const event in this.arguments[key]) {
-                    ret.addEventListener(event, this.arguments[key][event].bind(component));
+                for (const event in this.attributes[key]) {
+                    ret.addEventListener(event, this.attributes[key][event].bind(component));
                 }
             } else {
-                ret.setAttribute(key, this.arguments[key]);
+                ret.setAttribute(key, this.attributes[key]);
             }
             console.log({key})
         }
